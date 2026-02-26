@@ -73,7 +73,6 @@ const SystemRepair = () => {
 INSERT INTO public.user_roles (user_id, role)
 VALUES ('${user?.id}', 'admin');`}</pre>
           </div>
-        </div>
       </Card>
 
       <Card className="p-6 space-y-4 border-yellow-200 bg-yellow-50">
