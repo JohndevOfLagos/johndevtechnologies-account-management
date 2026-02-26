@@ -5,21 +5,53 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { BatteryCharging } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/components/ui/use-toast";
 
 const Login = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // TODO: Replace with Supabase auth
-    setTimeout(() => {
-      setLoading(false);
+    
+    try {
+      console.log("Attempting login with:", email);
+
+      // Domain restriction check
+      const adminEmail = "johnayomideadewunmi@gmail.com";
+      const allowedDomain = "johndevtechnologies.com";
+      
+      if (email !== adminEmail && !email.endsWith(`@${allowedDomain}`)) {
+        throw new Error(`Only employees with @${allowedDomain} email are allowed to login.`);
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        console.error("Supabase login error:", error);
+        throw error;
+      }
+      
+      console.log("Login successful:", data);
       navigate("/");
-    }, 800);
+    } catch (error: any) {
+      console.error("Catch block error:", error);
+      toast({
+        variant: "destructive",
+        title: "Login failed",
+        description: error.message || "Please check your credentials and try again",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

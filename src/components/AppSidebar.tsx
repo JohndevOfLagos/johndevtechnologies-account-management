@@ -28,6 +28,7 @@ import {
 
 const mainNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Debt Management", url: "/debt-management", icon: CreditCard },
 ];
 
 const serviceNav = [
@@ -44,6 +45,7 @@ const managementNav = [
   { title: "Employees", url: "/employees", icon: UserCog },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Audit Logs", url: "/audit", icon: ScrollText },
+  { title: "System Repair", url: "/system-repair", icon: Wrench },
 ];
 
 function NavGroup({ label, items }: { label: string; items: typeof mainNav }) {
@@ -75,7 +77,18 @@ function NavGroup({ label, items }: { label: string; items: typeof mainNav }) {
   );
 }
 
+import { useAuth } from "@/contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
+
 export function AppSidebar() {
+  const { signOut, role } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/login");
+  };
+
   return (
     <Sidebar className="border-r-0">
       <SidebarHeader className="p-5 pb-2">
@@ -95,11 +108,17 @@ export function AppSidebar() {
       <SidebarContent className="px-2">
         <NavGroup label="Overview" items={mainNav} />
         <NavGroup label="Services" items={serviceNav} />
-        <NavGroup label="Management" items={managementNav} />
+        {/* Only show Management section to admins */}
+        {role === 'admin' && (
+          <NavGroup label="Management" items={managementNav} />
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-3">
-        <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-all w-full text-sm">
+        <button
+          onClick={handleSignOut}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-all w-full text-sm"
+        >
           <LogOut className="h-4 w-4" />
           <span>Sign Out</span>
         </button>

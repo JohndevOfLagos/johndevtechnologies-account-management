@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { DollarSign, TrendingUp, CreditCard, Users, ArrowUpRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/StatCard";
@@ -16,42 +17,124 @@ import {
   Pie,
   Cell,
 } from "recharts";
-
-const revenueData = [
-  { name: "Mon", revenue: 4200 },
-  { name: "Tue", revenue: 3800 },
-  { name: "Wed", revenue: 5100 },
-  { name: "Thu", revenue: 4600 },
-  { name: "Fri", revenue: 6200 },
-  { name: "Sat", revenue: 7100 },
-  { name: "Sun", revenue: 3400 },
-];
-
-const serviceData = [
-  { name: "Charging", value: 3200, fill: "hsl(262, 83%, 58%)" },
-  { name: "Accessories", value: 2100, fill: "hsl(280, 70%, 55%)" },
-  { name: "POS Agent", value: 4500, fill: "hsl(200, 80%, 55%)" },
-  { name: "Snooker", value: 1800, fill: "hsl(150, 60%, 50%)" },
-  { name: "Repairs", value: 2800, fill: "hsl(40, 90%, 55%)" },
-  { name: "Sales", value: 5200, fill: "hsl(340, 75%, 55%)" },
-];
-
-const monthlyData = [
-  { month: "Jan", charging: 12000, accessories: 8000, pos: 15000, snooker: 6000, repairs: 9000, sales: 18000 },
-  { month: "Feb", charging: 13500, accessories: 7500, pos: 16000, snooker: 5500, repairs: 10000, sales: 17000 },
-  { month: "Mar", charging: 14000, accessories: 9000, pos: 14500, snooker: 7000, repairs: 11000, sales: 20000 },
-  { month: "Apr", charging: 12500, accessories: 8500, pos: 17000, snooker: 6500, repairs: 9500, sales: 19000 },
-];
-
-const recentTransactions = [
-  { id: "TXN-001", customer: "Adebayo M.", service: "POS Agent", amount: "₦45,000", status: "paid" },
-  { id: "TXN-002", customer: "Chioma K.", service: "Charging", amount: "₦2,500", status: "unpaid" },
-  { id: "TXN-003", customer: "Emeka O.", service: "Repair", amount: "₦15,000", status: "paid" },
-  { id: "TXN-004", customer: "Fatima S.", service: "Accessories", amount: "₦8,200", status: "paid" },
-  { id: "TXN-005", customer: "Ibrahim D.", service: "Snooker", amount: "₦3,000", status: "paid" },
-];
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { format, startOfWeek, addDays, isSameDay, startOfMonth } from "date-fns";
 
 const Index = () => {
+  const queryClient = useQueryClient();
+
+  // Fetch all transactions (for demo purposes, might need pagination/filtering in production)
+  const { data: transactions } = useQuery({
+    queryKey: ["all-transactions"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("transactions")
+        .select(`
+          *,
+          services (name),
+          customers (name)
+        `)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Realtime subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel("dashboard-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "transactions" },
+        (payload) => {
+          queryClient.invalidateQueries({ queryKey: ["all-transactions"] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
+  // Derived Statistics
+  const today = new Date();
+  const todaysTransactions = transactions?.filter((t) =>
+    isSameDay(new Date(t.created_at), today)
+  );
+  
+  const todaysRevenue = todaysTransactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+  
+  const currentMonthTransactions = transactions?.filter((t) => 
+    new Date(t.created_at) >= startOfMonth(today)
+  );
+  const monthlyRevenue = currentMonthTransactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+  
+  const posProfitToday = todaysTransactions
+    ?.filter((t) => t.services?.name === "POS Agent")
+    .reduce((sum, t) => sum + (Number(t.profit) || 0), 0) || 0;
+    
+  const posTxCount = todaysTransactions?.filter((t) => t.services?.name === "POS Agent").length || 0;
+
+  const outstandingBalance = transactions
+    ?.filter((t) => t.payment_status === "unpaid")
+    .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+    
+  const unpaidCount = transactions?.filter((t) => t.payment_status === "unpaid").length || 0;
+
+  // Chart Data: Weekly Revenue
+  const startOfCurrentWeek = startOfWeek(today, { weekStartsOn: 1 }); // Monday
+  const revenueData = Array.from({ length: 7 }).map((_, i) => {
+    const date = addDays(startOfCurrentWeek, i);
+    const dayRevenue = transactions
+      ?.filter((t) => isSameDay(new Date(t.created_at), date))
+      .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+    return {
+      name: format(date, "EEE"),
+      revenue: dayRevenue,
+    };
+  });
+
+  // Chart Data: Service Breakdown
+  const serviceStats = transactions?.reduce((acc, t) => {
+    const serviceName = t.services?.name || "Unknown";
+    acc[serviceName] = (acc[serviceName] || 0) + Number(t.amount);
+    return acc;
+  }, {} as Record<string, number>);
+
+  const serviceColors: Record<string, string> = {
+    "Charging Station": "hsl(262, 83%, 58%)",
+    "Accessories": "hsl(280, 70%, 55%)",
+    "POS Agent": "hsl(200, 80%, 55%)",
+    "Snooker Spot": "hsl(150, 60%, 50%)",
+    "Repairs": "hsl(40, 90%, 55%)",
+    "Device Sales": "hsl(340, 75%, 55%)",
+  };
+
+  const serviceData = Object.entries(serviceStats || {}).map(([name, value]) => ({
+    name,
+    value,
+    fill: serviceColors[name] || "hsl(0, 0%, 50%)",
+  }));
+
+  // Mock Monthly Data (Hard to derive accurately from scratch without historical data generation, keeping mock structure for UI stability but could be calculated similarly if data existed)
+  const monthlyData = [
+    { month: "Jan", charging: 12000, accessories: 8000, pos: 15000, snooker: 6000, repairs: 9000, sales: 18000 },
+    { month: "Feb", charging: 13500, accessories: 7500, pos: 16000, snooker: 5500, repairs: 10000, sales: 17000 },
+    { month: "Mar", charging: 14000, accessories: 9000, pos: 14500, snooker: 7000, repairs: 11000, sales: 20000 },
+    { month: "Apr", charging: 12500, accessories: 8500, pos: 17000, snooker: 6500, repairs: 9500, sales: 19000 },
+  ];
+
+  const recentTransactions = transactions?.slice(0, 5).map(t => ({
+    id: t.id,
+    customer: t.customers?.name || "Unknown",
+    service: t.services?.name || "Unknown",
+    amount: `₦${Number(t.amount).toLocaleString()}`,
+    status: t.payment_status
+  })) || [];
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -64,29 +147,29 @@ const Index = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Today's Revenue"
-            value="₦34,600"
-            change="+12% from yesterday"
+            value={`₦${todaysRevenue.toLocaleString()}`}
+            change="Realtime updates"
             changeType="positive"
             icon={DollarSign}
             gradient
           />
           <StatCard
             title="Monthly Revenue"
-            value="₦892,400"
-            change="+8% from last month"
+            value={`₦${monthlyRevenue.toLocaleString()}`}
+            change="Current month"
             changeType="positive"
             icon={TrendingUp}
           />
           <StatCard
             title="POS Profit Today"
-            value="₦12,350"
-            change="32 transactions"
+            value={`₦${posProfitToday.toLocaleString()}`}
+            change={`${posTxCount} transactions`}
             icon={CreditCard}
           />
           <StatCard
             title="Outstanding Balance"
-            value="₦156,800"
-            change="24 VIP + 18 Regular"
+            value={`₦${outstandingBalance.toLocaleString()}`}
+            change={`${unpaidCount} unpaid records`}
             changeType="negative"
             icon={Users}
           />
@@ -145,7 +228,7 @@ const Index = () => {
         {/* Monthly Breakdown + Recent */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card className="lg:col-span-2 p-5">
-            <h3 className="text-sm font-display font-semibold mb-4">Monthly Revenue by Service</h3>
+            <h3 className="text-sm font-display font-semibold mb-4">Monthly Revenue by Service (Mock Data)</h3>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={monthlyData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(260, 15%, 90%)" />
