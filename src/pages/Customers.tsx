@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Users, Plus, Edit2, Save, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Users, Plus, Edit2, Save, X, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,7 @@ const Customers = () => {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<CustomerType>("normal");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   // Fetch customers with transactions to calculate balance
   const { data: customerData, isLoading } = useQuery({
@@ -152,6 +153,38 @@ const Customers = () => {
     },
   });
 
+  // Delete customer mutation
+  const deleteCustomerMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // 1. Delete debt clearance requests
+      const { error: reqError } = await supabase.from("debt_clearance_requests").delete().eq("customer_id", id);
+      if (reqError) throw reqError;
+
+      // 2. Delete transactions (since no CASCADE on FK)
+      const { error: txError } = await supabase.from("transactions").delete().eq("customer_id", id);
+      if (txError) throw txError;
+
+      // 3. Delete customer
+      const { error } = await supabase.from("customers").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      setDeleteId(null);
+      toast({
+        title: "Success",
+        description: "Customer and associated data deleted successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.message,
+      });
+    },
+  });
+
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     addCustomerMutation.mutate(newCustomer);
@@ -173,7 +206,12 @@ const Customers = () => {
       <div className="space-y-6 animate-fade-in">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-display font-bold">Customers</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-display font-bold">Customers</h1>
+              <Badge variant="secondary" className="text-sm font-normal">
+                {totalCount} Total
+              </Badge>
+            </div>
             <p className="text-sm text-muted-foreground">
               Manage VIP, Regular, and Normal customers
             </p>
@@ -257,7 +295,7 @@ const Customers = () => {
                       <Users className="h-4 w-4 text-primary" />
                     </div>
                     <div>
-                      <p className="font-medium text-sm">{c.name}</p>
+                      <p className="font-semibold text-sm">{c.name}</p>
                       <p className="text-xs text-muted-foreground">
                         {c.phone || "No phone"}
                       </p>
@@ -321,6 +359,15 @@ const Customers = () => {
                         </Button>
                       </div>
                     )}
+                    
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => setDeleteId(c.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </Card>
               ))}
@@ -357,6 +404,30 @@ const Customers = () => {
             )}
           </div>
         )}
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Customer</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <p className="text-sm text-muted-foreground">
+                Are you sure you want to delete this customer? This will permanently remove the customer and all their transaction records.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
+              <Button 
+                variant="destructive" 
+                onClick={() => deleteId && deleteCustomerMutation.mutate(deleteId)}
+                disabled={deleteCustomerMutation.isPending}
+              >
+                {deleteCustomerMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

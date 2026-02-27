@@ -194,13 +194,28 @@ export function ServicePage({
 
       let customerId = selectedCustomerId;
 
-      // Create new customer if needed
+      // Check for duplicate customer name if creating new
       if (isNewCustomer) {
+        const trimmedName = newCustomer.name.trim();
+        
+        // Check if name exists (case-insensitive)
+        const { data: existing, error: checkError } = await supabase
+          .from("customers")
+          .select("id, name")
+          .ilike("name", trimmedName)
+          .limit(1);
+
+        if (checkError) throw checkError;
+        
+        if (existing && existing.length > 0) {
+          throw new Error(`Customer "${existing[0].name}" already exists.`);
+        }
+
         const { data: custData, error: custError } = await supabase
           .from("customers")
           .insert([
             {
-              name: newCustomer.name,
+              name: trimmedName,
               phone: newCustomer.phone || null,
               customer_type: newCustomer.type,
             },

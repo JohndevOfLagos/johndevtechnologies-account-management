@@ -11,6 +11,9 @@ import {
   BarChart3,
   ScrollText,
   LogOut,
+  Settings,
+  Calculator,
+  Trash2,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -29,6 +32,7 @@ import {
 const mainNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Debt Management", url: "/debt-management", icon: CreditCard },
+  { title: "Debt Calculator", url: "/debt-calculator", icon: Calculator },
 ];
 
 const serviceNav = [
@@ -45,7 +49,12 @@ const managementNav = [
   { title: "Employees", url: "/employees", icon: UserCog },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Audit Logs", url: "/audit", icon: ScrollText },
+  { title: "Deletion Requests", url: "/deletion-requests", icon: Trash2 },
   { title: "Debt Requests", url: "/debt-requests", icon: CreditCard },
+];
+
+const systemNav = [
+  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 function NavGroup({ label, items }: { label: string; items: typeof mainNav }) {
@@ -80,6 +89,9 @@ function NavGroup({ label, items }: { label: string; items: typeof mainNav }) {
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 
+import Logo_Icon from "../asset/logo-icon.png"
+
+
 export function AppSidebar() {
   const { signOut, role } = useAuth();
   const navigate = useNavigate();
@@ -93,25 +105,22 @@ export function AppSidebar() {
     <Sidebar className="border-r-0 h-screen overflow-hidden">
       <SidebarHeader className="p-5 pb-2">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center shadow-glow">
-            <span className="text-sm font-bold text-primary-foreground">JD</span>
-          </div>
-          <div>
-            <h2 className="font-display text-sm font-bold text-sidebar-foreground">
-              JohnDev
-            </h2>
-            <p className="text-[11px] text-sidebar-foreground/50">Technologies</p>
+          <div className=" flex items-center justify-center ">
+              <img src={Logo_Icon} alt=""/>
           </div>
         </div>
       </SidebarHeader>
 
       <SidebarContent className="px-2 overflow-y-auto sidebar-scroll">
         <NavGroup label="Overview" items={mainNav} />
-        <NavGroup label="Services" items={serviceNav} />
+        {role !== 'admin' && (
+          <NavGroup label="Services" items={serviceNav} />
+        )}
         {/* Only show Management section to admins */}
         {role === 'admin' && (
           <NavGroup label="Management" items={managementNav} />
         )}
+        <NavGroup label="System" items={systemNav} />
       </SidebarContent>
 
       <SidebarFooter className="p-3">

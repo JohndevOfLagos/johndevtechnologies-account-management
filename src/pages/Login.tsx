@@ -8,6 +8,8 @@ import { BatteryCharging } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
 
+import Logo from "../asset/logo.png"
+
 const Login = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -23,7 +25,7 @@ const Login = () => {
       console.log("Attempting login with:", email);
 
       // Domain restriction check
-      const adminEmails = ["johnayomideadewunmi@gmail.com", "johndevtechnologies@gmail.com"];
+      const adminEmails = ["johndevtechnologies@gmail.com"];
       const allowedDomain = "johndevtechnologies.com";
       
       if (!adminEmails.includes(email) && !email.endsWith(`@${allowedDomain}`)) {
@@ -64,10 +66,9 @@ const Login = () => {
 
       <Card className="w-full max-w-md p-8 relative animate-fade-in">
         <div className="text-center mb-8">
-          <div className="h-14 w-14 rounded-2xl gradient-primary flex items-center justify-center shadow-glow mx-auto mb-4">
-            <BatteryCharging className="h-7 w-7 text-primary-foreground" />
+          <div className="flex items-center justify-center  mx-auto mb-4">
+          <img src={Logo} alt=""/>
           </div>
-          <h1 className="text-2xl font-display font-bold">JohnDevTechnologies</h1>
           <p className="text-sm text-muted-foreground mt-1">Sign in to your account</p>
         </div>
 
@@ -77,7 +78,7 @@ const Login = () => {
             <Input
               id="email"
               type="email"
-              placeholder="you@johndevtech.com"
+              placeholder="@johndevtechnologies.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

@@ -11,6 +11,8 @@ import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
 import DebtManagement from "./pages/DebtManagement";
 import DebtRequests from "./pages/DebtRequests";
+import DeletionRequests from "./pages/DeletionRequests";
+import DebtCalculator from "./pages/DebtCalculator";
 import ChargingStation from "./pages/ChargingStation";
 import Accessories from "./pages/Accessories";
 import PosAgent from "./pages/PosAgent";
@@ -21,6 +23,7 @@ import Customers from "./pages/Customers";
 import Employees from "./pages/Employees";
 import Reports from "./pages/Reports";
 import AuditLogs from "./pages/AuditLogs";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -39,12 +42,14 @@ const App = () => (
             <Route element={<PrivateRoute />}>
               <Route path="/" element={<Index />} />
               <Route path="/debt-management" element={<DebtManagement />} />
+              <Route path="/debt-calculator" element={<DebtCalculator />} />
               <Route path="/charging" element={<ChargingStation />} />
               <Route path="/accessories" element={<Accessories />} />
               <Route path="/pos" element={<PosAgent />} />
               <Route path="/snooker" element={<Snooker />} />
               <Route path="/repairs" element={<Repairs />} />
               <Route path="/sales" element={<DeviceSales />} />
+              <Route path="/settings" element={<Settings />} />
               
               {/* Admin Only Routes */}
               <Route element={<AdminRoute />}>
@@ -53,6 +58,7 @@ const App = () => (
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/audit" element={<AuditLogs />} />
                 <Route path="/debt-requests" element={<DebtRequests />} />
+                <Route path="/deletion-requests" element={<DeletionRequests />} />
               </Route>
             </Route>
 

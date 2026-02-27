@@ -3,169 +3,189 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
-import { Search, CreditCard, CheckCircle, User, Banknote, Users, Send } from "lucide-react";
+import { Search, CreditCard, CheckCircle, User, Banknote, Users, Send, Filter, CheckSquare } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const DebtManagement = () => {
   const { toast } = useToast();
   const { role, user } = useAuth();
   const queryClient = useQueryClient();
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  
+  // Advanced Filters
+  const [filters, setFilters] = useState({
+    name: "",
+    phone: "",
+    type: "all",
+    status: "unpaid",
+    dateFrom: "",
+    dateTo: "",
+  });
 
-  // Fetch Customers based on search
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
+  const [isSelectAll, setIsSelectAll] = useState(false);
+
+  // 1. Fetch Customers who match the profile filters (Name, Phone, Type)
   const { data: customers } = useQuery({
-    queryKey: ["customers", searchTerm],
+    queryKey: ["customers-filtered", filters.name, filters.phone, filters.type],
     queryFn: async () => {
       let query = supabase
         .from("customers")
         .select("id, name, phone, customer_type")
         .order("name");
       
-      if (searchTerm) {
-        query = query.ilike("name", `%${searchTerm}%`);
-      }
+      if (filters.name) query = query.ilike("name", `%${filters.name}%`);
+      if (filters.phone) query = query.ilike("phone", `%${filters.phone}%`);
+      if (filters.type !== "all") query = query.eq("customer_type", filters.type);
       
-      const { data, error } = await query.limit(10);
+      const { data, error } = await query.limit(50); // Limit results for performance
       if (error) throw error;
-      return data;
+      return data || [];
     },
-    enabled: true,
   });
 
-  // Fetch Unpaid Transactions for Selected Customer
-  const { data: unpaidTransactions, isLoading: isLoadingDebt } = useQuery({
-    queryKey: ["unpaid-transactions", selectedCustomer?.id],
-    enabled: !!selectedCustomer?.id,
+  // 2. Fetch Transactions for ALL filtered customers (filtered by Status and Date)
+  const { data: filteredTransactions, isLoading: isLoadingDebt } = useQuery({
+    queryKey: ["filtered-transactions", filters, customers],
+    enabled: !!customers && customers.length > 0,
     queryFn: async () => {
-      const { data, error } = await supabase
+      if (!customers || customers.length === 0) return [];
+      
+      const customerIds = customers.map(c => c.id);
+      
+      let query = supabase
         .from("transactions")
         .select(`
-          *,
+          id,
+          amount,
+          created_at,
+          customer_id,
+          payment_status,
           services (name)
         `)
-        .eq("customer_id", selectedCustomer.id)
-        .eq("payment_status", "unpaid");
+        .in("customer_id", customerIds);
 
+      if (filters.status !== "all") {
+        query = query.eq("payment_status", filters.status);
+      }
+
+      if (filters.dateFrom) query = query.gte("created_at", `${filters.dateFrom}T00:00:00`);
+      if (filters.dateTo) query = query.lte("created_at", `${filters.dateTo}T23:59:59`);
+
+      const { data, error } = await query;
       if (error) throw error;
-      return data;
+      return data || [];
     },
   });
 
-  // Fetch All Unpaid Transactions for Overview
-  const { data: allUnpaid } = useQuery({
-    queryKey: ["all-unpaid-overview"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select(`
-          amount,
-          customers (customer_type)
-        `)
-        .eq("payment_status", "unpaid");
+  // Derived Data
+  const customersWithData = customers?.map(cust => {
+    const custTransactions = filteredTransactions?.filter(tx => tx.customer_id === cust.id) || [];
+    const totalAmount = custTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
+    const hasUnpaid = custTransactions.some(tx => tx.payment_status === "unpaid");
+    return { ...cust, totalAmount, transactions: custTransactions, hasUnpaid };
+  }).filter(c => c.transactions.length > 0) || []; 
 
-      if (error) throw error;
-      return data;
-    },
-  });
+  // Handle Selection
+  const handleSelectAll = () => {
+    if (isSelectAll) {
+      setSelectedCustomerIds([]);
+    } else {
+      setSelectedCustomerIds(customersWithData.map(c => c.id));
+    }
+    setIsSelectAll(!isSelectAll);
+  };
 
-  // Real-time subscription for transactions (for debt updates)
-  useEffect(() => {
-    const channel = supabase
-      .channel("debt-updates")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "transactions" },
-        (payload) => {
-          queryClient.invalidateQueries({ queryKey: ["unpaid-transactions"] });
-          queryClient.invalidateQueries({ queryKey: ["all-unpaid-overview"] });
-        }
-      )
-      .subscribe();
+  const handleSelectCustomer = (id: string) => {
+    if (selectedCustomerIds.includes(id)) {
+      setSelectedCustomerIds(selectedCustomerIds.filter(cid => cid !== id));
+      setIsSelectAll(false);
+    } else {
+      setSelectedCustomerIds([...selectedCustomerIds, id]);
+    }
+  };
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
+  // Calculate Totals for Selection
+  const selectedCustomersData = customersWithData.filter(c => selectedCustomerIds.includes(c.id));
+  const grandTotalAmount = selectedCustomersData.reduce((sum, c) => sum + c.totalAmount, 0);
 
-  // Calculate Overview Stats
-  const overviewStats = allUnpaid?.reduce((acc, tx) => {
-    const type = tx.customers?.customer_type || "normal";
-    acc[type] = (acc[type] || 0) + Number(tx.amount);
-    acc.total = (acc.total || 0) + Number(tx.amount);
-    return acc;
-  }, { vip: 0, regular: 0, normal: 0, total: 0 });
-
-  // Calculate Total Debt for Selected Customer
-  const totalDebt = unpaidTransactions?.reduce((sum, tx) => sum + Number(tx.amount), 0) || 0;
-
-  // Clear Debt Mutation
+  // Clear Debt Mutation (Admin) - Only affects UNPAID transactions within selection
   const clearDebtMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedCustomer || !unpaidTransactions?.length) return;
+      if (selectedCustomersData.length === 0) return;
 
-      const idsToUpdate = unpaidTransactions.map(tx => tx.id);
+      // Filter only unpaid transactions to clear
+      const unpaidTxIds = selectedCustomersData.flatMap(c => 
+        c.transactions.filter(t => t.payment_status === "unpaid").map(t => t.id)
+      );
+      
+      if (unpaidTxIds.length === 0) {
+        throw new Error("No unpaid transactions found in selection.");
+      }
 
       const { error } = await supabase
         .from("transactions")
         .update({ payment_status: "paid" })
-        .in("id", idsToUpdate);
+        .in("id", unpaidTxIds);
 
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["unpaid-transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["all-unpaid-overview"] });
-      toast({
-        title: "Success",
-        description: `Cleared debt of ₦${totalDebt.toLocaleString()} for ${selectedCustomer.name}`,
-      });
+      queryClient.invalidateQueries({ queryKey: ["filtered-transactions"] });
+      setSelectedCustomerIds([]);
+      setIsSelectAll(false);
+      toast({ title: "Success", description: "Selected debts have been marked as paid." });
     },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message,
-      });
-    },
+    onError: (error) => toast({ variant: "destructive", title: "Error", description: error.message }),
   });
 
-  // Request Clearance Mutation (For Employees)
+  // Request Clearance Mutation (Employee) - Only affects UNPAID
   const requestClearanceMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedCustomer || !user) return;
+      if (selectedCustomersData.length === 0 || !user) return;
 
-      const { error } = await supabase
-        .from("debt_clearance_requests")
-        .insert({
-          customer_id: selectedCustomer.id,
-          requested_by: user.id,
-          amount: totalDebt,
-          status: 'pending'
-        });
+      // Calculate unpaid amount per customer
+      const requests = selectedCustomersData
+        .map(c => {
+          const unpaidAmount = c.transactions
+            .filter(t => t.payment_status === "unpaid")
+            .reduce((sum, t) => sum + Number(t.amount), 0);
+          
+          return {
+            customer_id: c.id,
+            requested_by: user.id,
+            amount: unpaidAmount,
+            status: 'pending'
+          };
+        })
+        .filter(r => r.amount > 0);
 
+      if (requests.length === 0) {
+         throw new Error("No unpaid debt to request clearance for.");
+      }
+
+      const { error } = await supabase.from("debt_clearance_requests").insert(requests);
       if (error) throw error;
     },
     onSuccess: () => {
-      toast({
-        title: "Request Sent",
-        description: `Clearance request for ₦${totalDebt.toLocaleString()} sent to Admin.`,
-      });
-      setSelectedCustomer(null);
-      queryClient.invalidateQueries({ queryKey: ["debt-requests"] }); // Ensure admin sees it immediately if testing on same machine
+      toast({ title: "Request Sent", description: `Sent clearance requests.` });
+      setSelectedCustomerIds([]);
+      setIsSelectAll(false);
+      queryClient.invalidateQueries({ queryKey: ["debt-requests"] });
     },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message,
-      });
-    },
+    onError: (error) => toast({ variant: "destructive", title: "Error", description: error.message }),
   });
 
   return (
@@ -177,167 +197,132 @@ const DebtManagement = () => {
           </div>
           <div>
             <h1 className="text-2xl font-display font-bold">Debt Management</h1>
-            <p className="text-sm text-muted-foreground">Manage and clear customer debts</p>
+            <p className="text-sm text-muted-foreground">Filter, select, and clear customer debts</p>
           </div>
         </div>
 
-        {/* Debt Overview Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            title="Total Outstanding"
-            value={`₦${(overviewStats?.total || 0).toLocaleString()}`}
-            change="All customers"
-            changeType="negative"
-            icon={Banknote}
-          />
-          <StatCard
-            title="VIP Debt"
-            value={`₦${(overviewStats?.vip || 0).toLocaleString()}`}
-            change="Pay Monthly"
-            icon={Users}
-          />
-          <StatCard
-            title="Regular Debt"
-            value={`₦${(overviewStats?.regular || 0).toLocaleString()}`}
-            change="Pay Bi-Weekly"
-            icon={Users}
-          />
-          <StatCard
-            title="Normal Debt"
-            value={`₦${(overviewStats?.normal || 0).toLocaleString()}`}
-            change="Pay Instantly"
-            icon={Users}
-          />
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-6">
-          {/* Customer Search Section */}
-          <Card className="p-6 md:col-span-1 h-fit">
-            <h2 className="font-semibold mb-4">Select Customer</h2>
-            <div className="relative mb-4">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name..."
-                className="pl-9"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+        <div className="grid md:grid-cols-12 gap-6">
+          {/* Filters Panel */}
+          <Card className="p-4 md:col-span-3 h-fit space-y-4">
+            <div className="flex items-center gap-2 font-semibold">
+              <Filter className="h-4 w-4" /> Filters
             </div>
-            <div className="space-y-2 max-h-[400px] overflow-y-auto">
-              {customers?.map((customer) => (
-                <div
-                  key={customer.id}
-                  onClick={() => setSelectedCustomer(customer)}
-                  className={`p-3 rounded-lg cursor-pointer transition-colors flex items-center justify-between ${
-                    selectedCustomer?.id === customer.id
-                      ? "bg-primary/10 border-primary/20 border"
-                      : "hover:bg-muted border border-transparent"
-                  }`}
-                >
-                  <div>
-                    <p className="font-medium text-sm">{customer.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{customer.customer_type}</p>
-                  </div>
-                  {selectedCustomer?.id === customer.id && (
-                    <CheckCircle className="h-4 w-4 text-primary" />
-                  )}
-                </div>
-              ))}
-              {customers?.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">No customers found</p>
-              )}
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input placeholder="Search name..." value={filters.name} onChange={e => setFilters({...filters, name: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input placeholder="Search phone..." value={filters.phone} onChange={e => setFilters({...filters, phone: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+              <Label>Type</Label>
+              <Select value={filters.type} onValueChange={val => setFilters({...filters, type: val})}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="vip">VIP</SelectItem>
+                  <SelectItem value="regular">Regular</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={filters.status} onValueChange={val => setFilters({...filters, status: val})}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unpaid">Unpaid</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>From Date</Label>
+              <Input type="date" value={filters.dateFrom} onChange={e => setFilters({...filters, dateFrom: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+              <Label>To Date</Label>
+              <Input type="date" value={filters.dateTo} onChange={e => setFilters({...filters, dateTo: e.target.value})} />
             </div>
           </Card>
 
-          {/* Debt Details Section */}
-          <Card className="p-6 md:col-span-2">
-            {selectedCustomer ? (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between border-b pb-4">
-                  <div>
-                    <h2 className="text-xl font-bold">{selectedCustomer.name}</h2>
-                    <p className="text-sm text-muted-foreground capitalize">
-                      {selectedCustomer.customer_type} Customer
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm text-muted-foreground">Total Unpaid Debt</p>
-                    <p className="text-3xl font-display font-bold text-red-600">
-                      ₦{totalDebt.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
+          {/* Results & Actions Panel */}
+          <Card className="p-6 md:col-span-9">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <Checkbox 
+                  checked={isSelectAll} 
+                  onCheckedChange={handleSelectAll}
+                  id="select-all"
+                />
+                <Label htmlFor="select-all" className="cursor-pointer font-medium">
+                  Select All Matching ({customersWithData.length})
+                </Label>
+              </div>
+              <div className="text-right">
+                 <span className="text-sm text-muted-foreground">Selected Total:</span>
+                 <span className="ml-2 text-xl font-bold text-primary">₦{grandTotalAmount.toLocaleString()}</span>
+              </div>
+            </div>
 
-                {isLoadingDebt ? (
-                  <div className="text-center py-8">Loading debt records...</div>
-                ) : unpaidTransactions && unpaidTransactions.length > 0 ? (
-                  <>
-                    <div className="space-y-3">
-                      <h3 className="font-semibold text-sm text-muted-foreground">Unpaid Transactions</h3>
-                      <div className="border rounded-md divide-y max-h-[300px] overflow-y-auto">
-                        {unpaidTransactions.map((tx) => (
-                          <div key={tx.id} className="p-3 flex items-center justify-between">
-                            <div>
-                              <p className="font-medium text-sm">{tx.services?.name || "Service"}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(tx.created_at).toLocaleDateString()}
-                              </p>
-                            </div>
-                            <p className="font-medium">₦{tx.amount.toLocaleString()}</p>
-                          </div>
-                        ))}
+            <div className="border rounded-md divide-y max-h-[500px] overflow-y-auto mb-6">
+              {isLoadingDebt ? (
+                <div className="p-8 text-center text-muted-foreground">Loading data...</div>
+              ) : customersWithData.length > 0 ? (
+                customersWithData.map(customer => (
+                  <div key={customer.id} className="p-4 hover:bg-muted/50 transition-colors flex items-center gap-4">
+                    <Checkbox 
+                      checked={selectedCustomerIds.includes(customer.id)}
+                      onCheckedChange={() => handleSelectCustomer(customer.id)}
+                    />
+                    <div className="flex-1">
+                      <div className="flex justify-between">
+                        <p className="font-semibold">{customer.name}</p>
+                        <p className={`font-bold ${customer.hasUnpaid ? "text-red-600" : "text-green-600"}`}>
+                          ₦{customer.totalAmount.toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 text-xs text-muted-foreground mt-1">
+                        <span className="capitalize badge bg-gray-100 px-1 rounded">{customer.customer_type}</span>
+                        <span>•</span>
+                        <span>{customer.transactions.length} Records</span>
+                        <span>•</span>
+                        <span>{customer.phone || "No Phone"}</span>
                       </div>
                     </div>
-
-                    <div className="pt-4 border-t">
-                      {role === "admin" ? (
-                        <>
-                          <Button 
-                            className="w-full gradient-primary text-primary-foreground" 
-                            size="lg"
-                            onClick={() => clearDebtMutation.mutate()}
-                            disabled={clearDebtMutation.isPending}
-                          >
-                            {clearDebtMutation.isPending ? "Processing..." : `Clear All Debt (₦${totalDebt.toLocaleString()})`}
-                          </Button>
-                          <p className="text-xs text-muted-foreground text-center mt-2">
-                            Admin: This will mark all {unpaidTransactions.length} unpaid transactions as Paid instantly.
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <Button 
-                            className="w-full bg-orange-500 hover:bg-orange-600 text-white gap-2" 
-                            size="lg"
-                            onClick={() => requestClearanceMutation.mutate()}
-                            disabled={requestClearanceMutation.isPending}
-                          >
-                            <Send className="h-4 w-4" />
-                            {requestClearanceMutation.isPending ? "Sending..." : `Request Clearance (₦${totalDebt.toLocaleString()})`}
-                          </Button>
-                          <p className="text-xs text-muted-foreground text-center mt-2">
-                            Employee: This will send a request to Admin for review.
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center py-12">
-                    <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-3" />
-                    <h3 className="font-display font-semibold text-green-700">No Unpaid Debt</h3>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      This customer has no outstanding payments.
-                    </p>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
-                <User className="h-12 w-12 opacity-20 mb-4" />
-                <p>Select a customer to view their debt status</p>
-              </div>
-            )}
+                ))
+              ) : (
+                <div className="p-8 text-center text-muted-foreground">
+                  No customers found matching these filters.
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3">
+              {filters.status !== 'paid' && ( // Only show action buttons if we are looking at Unpaid or All
+                role === "admin" ? (
+                  <Button 
+                    className="gradient-primary text-white w-full md:w-auto"
+                    disabled={selectedCustomerIds.length === 0 || clearDebtMutation.isPending}
+                    onClick={() => clearDebtMutation.mutate()}
+                  >
+                    {clearDebtMutation.isPending ? "Processing..." : `Clear Selected Debt`}
+                  </Button>
+                ) : (
+                  <Button 
+                    className="bg-orange-500 hover:bg-orange-600 text-white w-full md:w-auto gap-2"
+                    disabled={selectedCustomerIds.length === 0 || requestClearanceMutation.isPending}
+                    onClick={() => requestClearanceMutation.mutate()}
+                  >
+                    <Send className="h-4 w-4" />
+                    {requestClearanceMutation.isPending ? "Sending..." : `Request Clearance`}
+                  </Button>
+                )
+              )}
+            </div>
           </Card>
         </div>
       </div>

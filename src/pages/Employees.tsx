@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,9 +61,9 @@ const Employees = () => {
         // Exclude current user
         if (emp.id === user?.id) return false;
 
-        // Exclude known admin names (fallback if DB role is missing)
-        const adminNames = ["John Ayomide Adewunmi", "John Dev Technologies", "Admin"];
-        if (adminNames.some(name => emp.full_name?.includes(name))) return false;
+        // Note: We used to exclude known admin names, but now we show them so Admin can manage/clear them.
+        // const adminNames = ["John Ayomide Adewunmi", "John Dev Technologies", "Admin"];
+        // if (adminNames.some(name => emp.full_name?.includes(name))) return false;
 
         return true;
       }) || [];
@@ -99,7 +99,7 @@ const Employees = () => {
         .from("user_roles")
         .select("role")
         .eq("user_id", profileData.id)
-        .single();
+        .maybeSingle();
 
       const newRole = profileData.role === 'none' ? 'employee' : profileData.role;
 
@@ -122,6 +122,28 @@ const Employees = () => {
     },
   });
 
+  const [recordCount, setRecordCount] = useState<number | null>(null);
+
+  const checkRecords = async (id: string) => {
+    let query = supabase.from("transactions").select("*", { count: 'exact', head: true }).eq("employee_id", id);
+    
+    if (serviceToClear !== "all") {
+      const { data: service } = await supabase.from("services").select("id").eq("name", serviceToClear).single();
+      if (service) {
+        query = query.eq("service_id", service.id);
+      }
+    }
+    
+    const { count } = await query;
+    setRecordCount(count);
+  };
+
+  useEffect(() => {
+    if (isClearOpen && selectedEmployeeId) {
+      checkRecords(selectedEmployeeId);
+    }
+  }, [isClearOpen, serviceToClear, selectedEmployeeId]);
+
   // Clear Records Mutation
   const clearRecordsMutation = useMutation({
     mutationFn: async () => {
@@ -137,12 +159,27 @@ const Employees = () => {
         }
       }
 
-      const { error } = await query;
+      const { data, error } = await query.select();
+      
       if (error) throw error;
+      
+      if (!data || data.length === 0) {
+        // It's possible there were no records to clear, or RLS blocked it.
+        // We can't easily distinguish without checking if records existed first.
+        // But if user expects deletion, warn them.
+        toast({ 
+          variant: "warning", 
+          title: "No records deleted", 
+          description: "Either no matching records were found, or you don't have permission (Admin role required)." 
+        });
+        return;
+      }
+
+      toast({ title: "Success", description: `Cleared ${data.length} records successfully` });
     },
     onSuccess: () => {
       setIsClearOpen(false);
-      toast({ title: "Success", description: "Records cleared successfully" });
+      // No need to invalidate employees, but maybe transactions if we were viewing them
     },
     onError: (error) => {
       toast({ variant: "destructive", title: "Error", description: error.message });
@@ -322,10 +359,15 @@ const Employees = () => {
               <DialogTitle>Clear Service Records</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
-              <p className="text-sm text-muted-foreground">
-                This will permanently delete transaction records for this employee.
-                Select which service records to clear.
-              </p>
+              <div className="text-sm text-muted-foreground">
+                <p>This will permanently delete transaction records for this employee.</p>
+                <p>Select which service records to clear.</p>
+                {recordCount !== null && (
+                  <p className="mt-2 font-medium text-foreground">
+                    Found {recordCount} records to delete.
+                  </p>
+                )}
+              </div>
               <div className="space-y-2">
                 <Label>Service</Label>
                 <Select value={serviceToClear} onValueChange={setServiceToClear}>
