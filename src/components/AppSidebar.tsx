@@ -45,7 +45,7 @@ const managementNav = [
   { title: "Employees", url: "/employees", icon: UserCog },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Audit Logs", url: "/audit", icon: ScrollText },
-  { title: "System Repair", url: "/system-repair", icon: Wrench },
+  { title: "Debt Requests", url: "/debt-requests", icon: CreditCard },
 ];
 
 function NavGroup({ label, items }: { label: string; items: typeof mainNav }) {
@@ -90,7 +90,7 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar className="border-r-0">
+    <Sidebar className="border-r-0 h-screen overflow-hidden">
       <SidebarHeader className="p-5 pb-2">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center shadow-glow">
@@ -105,7 +105,7 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-2">
+      <SidebarContent className="px-2 overflow-y-auto sidebar-scroll">
         <NavGroup label="Overview" items={mainNav} />
         <NavGroup label="Services" items={serviceNav} />
         {/* Only show Management section to admins */}

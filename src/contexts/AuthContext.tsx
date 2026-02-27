@@ -60,9 +60,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const fetchUserRole = async (userId: string) => {
-    // Fail-safe: Hardcode admin role for specific email
+    // Fail-safe: Hardcode admin role for specific emails
     const { data: { user } } = await supabase.auth.getUser();
-    if (user?.email === "johnayomideadewunmi@gmail.com") {
+    if (user?.email === "johnayomideadewunmi@gmail.com" || user?.email === "johndevtechnologies@gmail.com") {
       setRole("admin");
       setLoading(false);
       return;

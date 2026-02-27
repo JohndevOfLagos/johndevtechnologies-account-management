@@ -23,10 +23,10 @@ const Login = () => {
       console.log("Attempting login with:", email);
 
       // Domain restriction check
-      const adminEmail = "johnayomideadewunmi@gmail.com";
+      const adminEmails = ["johnayomideadewunmi@gmail.com", "johndevtechnologies@gmail.com"];
       const allowedDomain = "johndevtechnologies.com";
       
-      if (email !== adminEmail && !email.endsWith(`@${allowedDomain}`)) {
+      if (!adminEmails.includes(email) && !email.endsWith(`@${allowedDomain}`)) {
         throw new Error(`Only employees with @${allowedDomain} email are allowed to login.`);
       }
 

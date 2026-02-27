@@ -10,7 +10,7 @@ import Index from "./pages/Index";
 import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
 import DebtManagement from "./pages/DebtManagement";
-import SystemRepair from "./pages/SystemRepair";
+import DebtRequests from "./pages/DebtRequests";
 import ChargingStation from "./pages/ChargingStation";
 import Accessories from "./pages/Accessories";
 import PosAgent from "./pages/PosAgent";
@@ -52,7 +52,7 @@ const App = () => (
                 <Route path="/employees" element={<Employees />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/audit" element={<AuditLogs />} />
-                <Route path="/system-repair" element={<SystemRepair />} />
+                <Route path="/debt-requests" element={<DebtRequests />} />
               </Route>
             </Route>
 

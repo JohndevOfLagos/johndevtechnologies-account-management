@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DollarSign, TrendingUp, CreditCard, Users, ArrowUpRight } from "lucide-react";
+import { Banknote, TrendingUp, CreditCard, Users, ArrowUpRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/StatCard";
 import { DashboardLayout } from "@/components/DashboardLayout";
@@ -65,7 +65,9 @@ const Index = () => {
     isSameDay(new Date(t.created_at), today)
   );
   
-  const todaysRevenue = todaysTransactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+  const todaysRevenue = todaysTransactions
+    ?.filter((t) => t.payment_status === "paid")
+    .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
   
   const currentMonthTransactions = transactions?.filter((t) => 
     new Date(t.created_at) >= startOfMonth(today)
@@ -150,7 +152,7 @@ const Index = () => {
             value={`₦${todaysRevenue.toLocaleString()}`}
             change="Realtime updates"
             changeType="positive"
-            icon={DollarSign}
+            icon={Banknote}
             gradient
           />
           <StatCard

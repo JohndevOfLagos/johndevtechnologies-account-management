@@ -134,4 +134,23 @@
     backdrop-filter: blur(12px);
     border: 1px solid hsl(260 15% 90% / 0.5);
   }
+
+  /* Custom Scrollbar for Sidebar */
+  .sidebar-scroll::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 10px;
+    transition: background 0.3s ease;
+  }
+
+  .sidebar-scroll:hover::-webkit-scrollbar-thumb {
+    background: hsl(var(--sidebar-border));
+  }
 }

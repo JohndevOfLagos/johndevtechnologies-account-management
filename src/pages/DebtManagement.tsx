@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
-import { Search, CreditCard, CheckCircle, User, Banknote, Users } from "lucide-react";
+import { Search, CreditCard, CheckCircle, User, Banknote, Users, Send } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
+import { useAuth } from "@/contexts/AuthContext";
 
 const DebtManagement = () => {
   const { toast } = useToast();
+  const { role, user } = useAuth();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
@@ -123,6 +125,39 @@ const DebtManagement = () => {
         title: "Success",
         description: `Cleared debt of ₦${totalDebt.toLocaleString()} for ${selectedCustomer.name}`,
       });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.message,
+      });
+    },
+  });
+
+  // Request Clearance Mutation (For Employees)
+  const requestClearanceMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedCustomer || !user) return;
+
+      const { error } = await supabase
+        .from("debt_clearance_requests")
+        .insert({
+          customer_id: selectedCustomer.id,
+          requested_by: user.id,
+          amount: totalDebt,
+          status: 'pending'
+        });
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Request Sent",
+        description: `Clearance request for ₦${totalDebt.toLocaleString()} sent to Admin.`,
+      });
+      setSelectedCustomer(null);
+      queryClient.invalidateQueries({ queryKey: ["debt-requests"] }); // Ensure admin sees it immediately if testing on same machine
     },
     onError: (error) => {
       toast({
@@ -255,17 +290,36 @@ const DebtManagement = () => {
                     </div>
 
                     <div className="pt-4 border-t">
-                      <Button 
-                        className="w-full gradient-primary text-primary-foreground" 
-                        size="lg"
-                        onClick={() => clearDebtMutation.mutate()}
-                        disabled={clearDebtMutation.isPending}
-                      >
-                        {clearDebtMutation.isPending ? "Processing..." : `Clear All Debt (₦${totalDebt.toLocaleString()})`}
-                      </Button>
-                      <p className="text-xs text-muted-foreground text-center mt-2">
-                        This will mark all {unpaidTransactions.length} unpaid transactions as Paid.
-                      </p>
+                      {role === "admin" ? (
+                        <>
+                          <Button 
+                            className="w-full gradient-primary text-primary-foreground" 
+                            size="lg"
+                            onClick={() => clearDebtMutation.mutate()}
+                            disabled={clearDebtMutation.isPending}
+                          >
+                            {clearDebtMutation.isPending ? "Processing..." : `Clear All Debt (₦${totalDebt.toLocaleString()})`}
+                          </Button>
+                          <p className="text-xs text-muted-foreground text-center mt-2">
+                            Admin: This will mark all {unpaidTransactions.length} unpaid transactions as Paid instantly.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Button 
+                            className="w-full bg-orange-500 hover:bg-orange-600 text-white gap-2" 
+                            size="lg"
+                            onClick={() => requestClearanceMutation.mutate()}
+                            disabled={requestClearanceMutation.isPending}
+                          >
+                            <Send className="h-4 w-4" />
+                            {requestClearanceMutation.isPending ? "Sending..." : `Request Clearance (₦${totalDebt.toLocaleString()})`}
+                          </Button>
+                          <p className="text-xs text-muted-foreground text-center mt-2">
+                            Employee: This will send a request to Admin for review.
+                          </p>
+                        </>
+                      )}
                     </div>
                   </>
                 ) : (
