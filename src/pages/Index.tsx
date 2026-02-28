@@ -19,7 +19,7 @@ import {
 } from "recharts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { format, startOfWeek, addDays, isSameDay, startOfMonth } from "date-fns";
+import { format, startOfWeek, addDays, isSameDay, startOfMonth, subMonths, endOfMonth } from "date-fns";
 
 const Index = () => {
   const queryClient = useQueryClient();
@@ -72,7 +72,9 @@ const Index = () => {
   const currentMonthTransactions = transactions?.filter((t) => 
     new Date(t.created_at) >= startOfMonth(today)
   );
-  const monthlyRevenue = currentMonthTransactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+  const monthlyRevenue = currentMonthTransactions
+    ?.filter((t) => t.payment_status === "paid")
+    .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
   
   const posProfitToday = todaysTransactions
     ?.filter((t) => t.services?.name === "POS Agent")
@@ -91,7 +93,7 @@ const Index = () => {
   const revenueData = Array.from({ length: 7 }).map((_, i) => {
     const date = addDays(startOfCurrentWeek, i);
     const dayRevenue = transactions
-      ?.filter((t) => isSameDay(new Date(t.created_at), date))
+      ?.filter((t) => isSameDay(new Date(t.created_at), date) && t.payment_status === "paid")
       .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
     return {
       name: format(date, "EEE"),
@@ -101,6 +103,7 @@ const Index = () => {
 
   // Chart Data: Service Breakdown
   const serviceStats = transactions?.reduce((acc, t) => {
+    if (t.payment_status !== "paid") return acc; // Only count paid
     const serviceName = t.services?.name || "Unknown";
     acc[serviceName] = (acc[serviceName] || 0) + Number(t.amount);
     return acc;
@@ -121,13 +124,35 @@ const Index = () => {
     fill: serviceColors[name] || "hsl(0, 0%, 50%)",
   }));
 
-  // Mock Monthly Data (Hard to derive accurately from scratch without historical data generation, keeping mock structure for UI stability but could be calculated similarly if data existed)
-  const monthlyData = [
-    { month: "Jan", charging: 12000, accessories: 8000, pos: 15000, snooker: 6000, repairs: 9000, sales: 18000 },
-    { month: "Feb", charging: 13500, accessories: 7500, pos: 16000, snooker: 5500, repairs: 10000, sales: 17000 },
-    { month: "Mar", charging: 14000, accessories: 9000, pos: 14500, snooker: 7000, repairs: 11000, sales: 20000 },
-    { month: "Apr", charging: 12500, accessories: 8500, pos: 17000, snooker: 6500, repairs: 9500, sales: 19000 },
-  ];
+  // Real-time Monthly Revenue by Service (Last 6 Months)
+  const monthlyData = Array.from({ length: 6 }).map((_, i) => {
+    const date = subMonths(new Date(), 5 - i); // Start from 5 months ago
+    const monthStart = startOfMonth(date);
+    const monthEnd = endOfMonth(date);
+    const monthName = format(date, "MMM");
+
+    const monthTx = transactions?.filter(t => {
+      const tDate = new Date(t.created_at);
+      return tDate >= monthStart && tDate <= monthEnd && t.payment_status === "paid";
+    }) || [];
+
+    const charging = monthTx.filter(t => t.services?.name === "Charging Station").reduce((sum, t) => sum + Number(t.amount), 0);
+    const accessories = monthTx.filter(t => t.services?.name === "Accessories").reduce((sum, t) => sum + Number(t.amount), 0);
+    const pos = monthTx.filter(t => t.services?.name === "POS Agent").reduce((sum, t) => sum + Number(t.amount), 0);
+    const snooker = monthTx.filter(t => t.services?.name === "Snooker Spot").reduce((sum, t) => sum + Number(t.amount), 0);
+    const repairs = monthTx.filter(t => t.services?.name === "Repairs").reduce((sum, t) => sum + Number(t.amount), 0);
+    const sales = monthTx.filter(t => t.services?.name === "Device Sales").reduce((sum, t) => sum + Number(t.amount), 0);
+
+    return {
+      month: monthName,
+      charging,
+      accessories,
+      pos,
+      snooker,
+      repairs,
+      sales
+    };
+  });
 
   const recentTransactions = transactions?.slice(0, 5).map(t => ({
     id: t.id,
@@ -230,7 +255,7 @@ const Index = () => {
         {/* Monthly Breakdown + Recent */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card className="lg:col-span-2 p-5">
-            <h3 className="text-sm font-display font-semibold mb-4">Monthly Revenue by Service (Mock Data)</h3>
+            <h3 className="text-sm font-display font-semibold mb-4">Monthly Revenue by Service</h3>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={monthlyData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(260, 15%, 90%)" />
