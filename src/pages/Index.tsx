@@ -245,6 +245,13 @@ const Index = () => {
             gradient
           />
           
+          <StatCard
+            title="POS Profit Today"
+            value={`₦${posProfitToday.toLocaleString()}`}
+            change={`${posTxCount} transactions`}
+            icon={CreditCard}
+          />
+          
           {role === 'admin' && (
             <>
               <StatCard
@@ -260,12 +267,6 @@ const Index = () => {
                 change="Current year"
                 changeType="positive"
                 icon={TrendingUp}
-              />
-              <StatCard
-                title="POS Profit Today"
-                value={`₦${posProfitToday.toLocaleString()}`}
-                change={`${posTxCount} transactions`}
-                icon={CreditCard}
               />
               <StatCard
                 title="POS Profit Monthly"
