@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Users, Plus, Edit2, Save, X, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { Users, Plus, Edit2, Save, X, ChevronLeft, ChevronRight, Trash2, Star } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,6 +61,8 @@ const Customers = () => {
       const { data: customers, error, count } = await supabase
         .from("customers")
         .select("*, transactions(amount, payment_status)", { count: "exact" })
+        .neq("name", "") // Filter out empty names
+        .not("name", "is", null) // Filter out null names
         .order("created_at", { ascending: false })
         .range(from, to);
 
@@ -343,12 +345,22 @@ const Customers = () => {
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className={typeBadge[c.customer_type]}
-                        >
-                          {c.customer_type.toUpperCase()}
-                        </Badge>
+                        {c.customer_type === 'vip' ? (
+                          <Badge variant="outline" className="bg-yellow-100 text-yellow-700 border-yellow-200 gap-1">
+                            <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
+                            <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
+                            VIP
+                          </Badge>
+                        ) : c.customer_type === 'regular' ? (
+                          <Badge variant="outline" className="bg-blue-100 text-blue-700 border-blue-200 gap-1">
+                            <Star className="h-3 w-3 fill-blue-500 text-blue-500" />
+                            REGULAR
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-muted text-muted-foreground border-border">
+                            NORMAL
+                          </Badge>
+                        )}
                         <Button
                           size="icon"
                           variant="ghost"

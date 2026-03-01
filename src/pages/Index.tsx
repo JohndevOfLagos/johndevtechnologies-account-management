@@ -19,9 +19,11 @@ import {
 } from "recharts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { format, startOfWeek, addDays, isSameDay, startOfMonth, subMonths, endOfMonth } from "date-fns";
+import { format, startOfWeek, addDays, isSameDay, startOfMonth, subMonths, endOfMonth, startOfYear } from "date-fns";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Index = () => {
+  const { role } = useAuth();
   const queryClient = useQueryClient();
 
   // Fetch all transactions (for demo purposes, might need pagination/filtering in production)
@@ -33,7 +35,7 @@ const Index = () => {
         .select(`
           *,
           services (name),
-          customers (name)
+          customers (name, customer_type)
         `)
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -67,26 +69,79 @@ const Index = () => {
   
   const todaysRevenue = todaysTransactions
     ?.filter((t) => t.payment_status === "paid")
-    .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+    .reduce((sum, t) => {
+      // For POS Agent, only count profit as revenue
+      if (t.services?.name === "POS Agent") {
+        return sum + (Number(t.profit) || 0);
+      }
+      return sum + Number(t.amount);
+    }, 0) || 0;
   
-  const currentMonthTransactions = transactions?.filter((t) => 
-    new Date(t.created_at) >= startOfMonth(today)
-  );
+  const currentMonthTransactions = transactions?.filter((t) => {
+    const txDate = new Date(t.created_at);
+    const monthStart = startOfMonth(today);
+    return txDate >= monthStart;
+  });
   const monthlyRevenue = currentMonthTransactions
     ?.filter((t) => t.payment_status === "paid")
-    .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+    .reduce((sum, t) => {
+      // For POS Agent, only count profit as revenue
+      if (t.services?.name === "POS Agent") {
+        const profit = Number(t.profit);
+        return sum + (isNaN(profit) ? 0 : profit);
+      }
+      const amount = Number(t.amount);
+      return sum + (isNaN(amount) ? 0 : amount);
+    }, 0) || 0;
+  
+  const currentYearTransactions = transactions?.filter((t) => 
+    new Date(t.created_at) >= startOfYear(today)
+  );
+  const yearlyRevenue = currentYearTransactions
+    ?.filter((t) => t.payment_status === "paid")
+    .reduce((sum, t) => {
+      // For POS Agent, only count profit as revenue
+      if (t.services?.name === "POS Agent") {
+        return sum + (Number(t.profit) || 0);
+      }
+      return sum + Number(t.amount);
+    }, 0) || 0;
   
   const posProfitToday = todaysTransactions
-    ?.filter((t) => t.services?.name === "POS Agent")
+    ?.filter((t) => t.services?.name === "POS Agent" && t.payment_status === "paid")
+    .reduce((sum, t) => sum + (Number(t.profit) || 0), 0) || 0;
+
+  const posProfitMonthly = currentMonthTransactions
+    ?.filter((t) => t.services?.name === "POS Agent" && t.payment_status === "paid")
     .reduce((sum, t) => sum + (Number(t.profit) || 0), 0) || 0;
     
   const posTxCount = todaysTransactions?.filter((t) => t.services?.name === "POS Agent").length || 0;
+  const posTxCountMonthly = currentMonthTransactions?.filter((t) => t.services?.name === "POS Agent").length || 0;
 
-  const outstandingBalance = transactions
-    ?.filter((t) => t.payment_status === "unpaid")
+  // Split Outstanding Balance
+  // 1. Normal Customers
+  const normalOutstandingBalance = transactions
+    ?.filter((t) => t.payment_status === "unpaid" && t.customers?.customer_type === "normal")
     .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
-    
-  const unpaidCount = transactions?.filter((t) => t.payment_status === "unpaid").length || 0;
+
+  const normalUnpaidCount = transactions
+    ?.filter((t) => t.payment_status === "unpaid" && t.customers?.customer_type === "normal")
+    .length || 0;
+
+  // 2. VIP & Regular Customers
+  const vipRegularOutstandingBalance = transactions
+    ?.filter((t) => 
+      t.payment_status === "unpaid" && 
+      (t.customers?.customer_type === "vip" || t.customers?.customer_type === "regular")
+    )
+    .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+
+  const vipRegularUnpaidCount = transactions
+    ?.filter((t) => 
+      t.payment_status === "unpaid" && 
+      (t.customers?.customer_type === "vip" || t.customers?.customer_type === "regular")
+    )
+    .length || 0;
 
   // Chart Data: Weekly Revenue
   const startOfCurrentWeek = startOfWeek(today, { weekStartsOn: 1 }); // Monday
@@ -94,7 +149,12 @@ const Index = () => {
     const date = addDays(startOfCurrentWeek, i);
     const dayRevenue = transactions
       ?.filter((t) => isSameDay(new Date(t.created_at), date) && t.payment_status === "paid")
-      .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+      .reduce((sum, t) => {
+        if (t.services?.name === "POS Agent") {
+          return sum + (Number(t.profit) || 0);
+        }
+        return sum + Number(t.amount);
+      }, 0) || 0;
     return {
       name: format(date, "EEE"),
       revenue: dayRevenue,
@@ -105,7 +165,8 @@ const Index = () => {
   const serviceStats = transactions?.reduce((acc, t) => {
     if (t.payment_status !== "paid") return acc; // Only count paid
     const serviceName = t.services?.name || "Unknown";
-    acc[serviceName] = (acc[serviceName] || 0) + Number(t.amount);
+    const valueToAdd = serviceName === "POS Agent" ? (Number(t.profit) || 0) : Number(t.amount);
+    acc[serviceName] = (acc[serviceName] || 0) + valueToAdd;
     return acc;
   }, {} as Record<string, number>);
 
@@ -138,7 +199,7 @@ const Index = () => {
 
     const charging = monthTx.filter(t => t.services?.name === "Charging Station").reduce((sum, t) => sum + Number(t.amount), 0);
     const accessories = monthTx.filter(t => t.services?.name === "Accessories").reduce((sum, t) => sum + Number(t.amount), 0);
-    const pos = monthTx.filter(t => t.services?.name === "POS Agent").reduce((sum, t) => sum + Number(t.amount), 0);
+    const pos = monthTx.filter(t => t.services?.name === "POS Agent").reduce((sum, t) => sum + (Number(t.profit) || 0), 0);
     const snooker = monthTx.filter(t => t.services?.name === "Snooker Spot").reduce((sum, t) => sum + Number(t.amount), 0);
     const repairs = monthTx.filter(t => t.services?.name === "Repairs").reduce((sum, t) => sum + Number(t.amount), 0);
     const sales = monthTx.filter(t => t.services?.name === "Device Sales").reduce((sum, t) => sum + Number(t.amount), 0);
@@ -154,7 +215,10 @@ const Index = () => {
     };
   });
 
-  const recentTransactions = transactions?.slice(0, 5).map(t => ({
+  const recentTransactions = transactions
+    ?.filter(t => t.customers?.name) // Filter out transactions with no customer name (Unknown/Anonymous)
+    .slice(0, 5)
+    .map(t => ({
     id: t.id,
     customer: t.customers?.name || "Unknown",
     service: t.services?.name || "Unknown",
@@ -171,7 +235,7 @@ const Index = () => {
         </div>
 
         {/* Stat Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard
             title="Today's Revenue"
             value={`₦${todaysRevenue.toLocaleString()}`}
@@ -180,23 +244,49 @@ const Index = () => {
             icon={Banknote}
             gradient
           />
+          
+          {role === 'admin' && (
+            <>
+              <StatCard
+                title="Monthly Revenue"
+                value={`₦${monthlyRevenue.toLocaleString()}`}
+                change="Current month"
+                changeType="positive"
+                icon={TrendingUp}
+              />
+              <StatCard
+                title="Yearly Revenue"
+                value={`₦${yearlyRevenue.toLocaleString()}`}
+                change="Current year"
+                changeType="positive"
+                icon={TrendingUp}
+              />
+              <StatCard
+                title="POS Profit Today"
+                value={`₦${posProfitToday.toLocaleString()}`}
+                change={`${posTxCount} transactions`}
+                icon={CreditCard}
+              />
+              <StatCard
+                title="POS Profit Monthly"
+                value={`₦${posProfitMonthly.toLocaleString()}`}
+                change={`${posTxCountMonthly} transactions`}
+                icon={CreditCard}
+              />
+            </>
+          )}
+
           <StatCard
-            title="Monthly Revenue"
-            value={`₦${monthlyRevenue.toLocaleString()}`}
-            change="Current month"
-            changeType="positive"
-            icon={TrendingUp}
+            title="Outstanding (Normal)"
+            value={`₦${normalOutstandingBalance.toLocaleString()}`}
+            change={`${normalUnpaidCount} unpaid records`}
+            changeType="negative"
+            icon={Users}
           />
           <StatCard
-            title="POS Profit Today"
-            value={`₦${posProfitToday.toLocaleString()}`}
-            change={`${posTxCount} transactions`}
-            icon={CreditCard}
-          />
-          <StatCard
-            title="Outstanding Balance"
-            value={`₦${outstandingBalance.toLocaleString()}`}
-            change={`${unpaidCount} unpaid records`}
+            title="Outstanding (VIP/Regular)"
+            value={`₦${vipRegularOutstandingBalance.toLocaleString()}`}
+            change={`${vipRegularUnpaidCount} unpaid records`}
             changeType="negative"
             icon={Users}
           />

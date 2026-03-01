@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BarChart3, Download, FileSpreadsheet } from "lucide-react";
+import { BarChart3, Download, FileSpreadsheet, Star } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/integrations/supabase/types";
 
-type CustomerType = Database["public"]["Enums"]["customer_type"] | "all";
+type CustomerType = Database["public"]["Enums"]["customer_type"] | "all" | "unknown";
 
 const Reports = () => {
   const queryClient = useQueryClient();
@@ -46,14 +46,21 @@ const Reports = () => {
         .from("transactions")
         .select(`
           *,
-          customers!inner (name, customer_type),
+          customers (name, customer_type),
           services (name),
           users:employee_id (email)
         `)
         .order("created_at", { ascending: false });
 
-      if (customerTypeFilter !== "all") {
-        query = query.eq("customers.customer_type", customerTypeFilter);
+      if (customerTypeFilter === "unknown") {
+        query = query.is("customer_id", null);
+      } else {
+        // Default: Exclude anonymous transactions unless specifically filtered
+        if (customerTypeFilter === "all") {
+           query = query.not("customer_id", "is", null);
+        } else if (customerTypeFilter !== "all") {
+           query = query.eq("customers.customer_type", customerTypeFilter);
+        }
       }
 
       const { data, error } = await query;
@@ -101,7 +108,21 @@ const Reports = () => {
     document.body.removeChild(link);
   };
 
-  const totalRevenue = transactions?.reduce((sum, tx) => sum + Number(tx.amount), 0) || 0;
+  const totalRevenue = transactions?.reduce((sum, tx) => {
+    // Only count paid transactions
+    if (tx.payment_status !== "paid") return sum;
+    
+    // For POS Agent, only count profit as revenue
+    if (tx.services?.name === "POS Agent") {
+      const profit = Number(tx.profit);
+      return sum + (isNaN(profit) ? 0 : profit);
+    }
+    
+    // For other services, count the full amount
+    const amount = Number(tx.amount);
+    return sum + (isNaN(amount) ? 0 : amount);
+  }, 0) || 0;
+
   const totalProfit = transactions?.reduce((sum, tx) => sum + (Number(tx.profit) || 0), 0) || 0;
 
   return (
@@ -127,6 +148,7 @@ const Reports = () => {
                 <SelectItem value="vip">VIP</SelectItem>
                 <SelectItem value="regular">Regular</SelectItem>
                 <SelectItem value="normal">Normal</SelectItem>
+                <SelectItem value="unknown">Unknown (Anonymous)</SelectItem>
               </SelectContent>
             </Select>
             <Button variant="outline" className="gap-2" onClick={exportCSV} disabled={!transactions?.length}>

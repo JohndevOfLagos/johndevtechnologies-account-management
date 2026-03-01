@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { LucideIcon, Plus, User, Banknote, Calendar, Pencil } from "lucide-react";
+import { LucideIcon, Plus, User, Banknote, Calendar, Pencil, Trash2, Filter, Star } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,16 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -59,9 +69,19 @@ export function ServicePage({
   const [profit, setProfit] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("paid");
   const [metadata, setMetadata] = useState<Record<string, string>>({});
-  const [transactionType, setTransactionType] = useState<"Withdraw" | "Transfer">("Withdraw");
-  const [selectedDate, setSelectedDate] = useState("");
+  const [transactionType, setTransactionType] = useState<"Withdraw" | "Transfer" | "Deposit">("Withdraw");
   const [gamesPlayed, setGamesPlayed] = useState(""); // State for games played (Snooker)
+  
+  // Search and Filter States
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<PaymentStatus | "all">("all");
+  const [customerTypeFilter, setCustomerTypeFilter] = useState<CustomerType | "all" | "unknown">("all");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  
+  // Delete Confirmation State
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
   // Filter out standard fields from metadata inputs
   const metadataFields = fields.filter(
@@ -128,24 +148,69 @@ export function ServicePage({
     },
   });
 
-  // Fetch Transactions
+  // Fetch Transactions with Filters
   const { data: transactions, isLoading } = useQuery({
-    queryKey: ["transactions", service?.id],
+    queryKey: ["transactions", service?.id, searchTerm, statusFilter, customerTypeFilter, startDate, endDate],
     enabled: !!service?.id,
     queryFn: async () => {
       console.log("Fetching transactions for service ID:", service?.id);
       
-      // Removed "users:employee_id (email)" to fix PGRST200 error
-      // It seems there is no relationship defined between transactions and employee_id in Supabase yet
-      // We will skip fetching the email for now to make the page work
-      const { data, error } = await supabase
+      const term = searchTerm.toLowerCase();
+      // Check if user is specifically searching for "unknown" or "anonymous" records
+      const isSearchUnknown = term === "unknown" || term === "unknow" || term === "anonymous";
+      
+      // Use inner join if:
+      // 1. We have a search term AND it's NOT a search for "unknown" (we want strict name matching)
+      // 2. We have a specific customer type filter (VIP/Regular/Normal)
+      const useInnerJoin = (searchTerm && !isSearchUnknown) || (customerTypeFilter !== "all" && customerTypeFilter !== "unknown");
+      
+      let query = supabase
         .from("transactions")
         .select(`
           *,
-          customers (name, customer_type)
+          customers${useInnerJoin ? "!inner" : ""} (name, customer_type)
         `)
         .eq("service_id", service!.id)
         .order("created_at", { ascending: false });
+
+      // Apply Filters
+      if (searchTerm) {
+        if (isSearchUnknown) {
+          // User explicitly searched for "unknown", show anonymous records
+          query = query.is("customer_id", null);
+        } else {
+          // Normal search by name (inner join handles the filtering)
+          query = query.ilike('customers.name', `%${searchTerm}%`);
+        }
+      } else {
+        // Default: Show ALL transactions, including unknown/anonymous ones
+        // Only filter if a specific customer type is selected
+        if (customerTypeFilter === "unknown") {
+          query = query.is("customer_id", null);
+        } 
+        // We REMOVED the "else if (customerTypeFilter === 'all')" block that was hiding null customer_ids
+      }
+
+      if (statusFilter !== "all") {
+        query = query.eq("payment_status", statusFilter);
+      }
+
+      if (customerTypeFilter !== "all" && customerTypeFilter !== "unknown") {
+        query = query.eq("customers.customer_type", customerTypeFilter);
+      }
+
+      if (startDate) {
+        query = query.gte("created_at", new Date(startDate).toISOString());
+      }
+
+      if (endDate) {
+        // Set end date to end of day
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query = query.lte("created_at", end.toISOString());
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error("Error fetching transactions:", error);
@@ -225,14 +290,12 @@ export function ServicePage({
 
         if (custError) throw custError;
         customerId = custData.id;
-      } else if (!customerId) {
-        // Allow transaction without customer if needed, or enforce it?
-        // Requirements say "each new record must state or add record if the customer is regular, vip , or normal"
-        // This implies customer is mandatory.
-        throw new Error("Please select or create a customer");
+      } else if (!customerId || customerId === "none") {
+        // Allow transaction without customer
+        customerId = null as unknown as string; // Supabase handles null as NULL in database
       }
 
-      const timestamp = selectedDate ? new Date(selectedDate).toISOString() : new Date().toISOString();
+      const timestamp = new Date().toISOString();
 
       const { error } = await supabase.from("transactions").insert([
         {
@@ -268,7 +331,7 @@ export function ServicePage({
     },
   });
 
-  // Update Transaction Mutation
+    // Update Transaction Mutation
   const updateTransactionMutation = useMutation({
     mutationFn: async () => {
       if (!editingTx) return;
@@ -304,6 +367,42 @@ export function ServicePage({
     },
   });
 
+  // Delete Transaction Mutation
+  const deleteTransactionMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("transactions").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["all-transactions"] });
+      toast({
+        title: "Success",
+        description: "Transaction deleted successfully",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.message,
+      });
+    },
+  });
+
+  const handleDelete = (id: string) => {
+    setDeleteId(id);
+    setIsDeleteOpen(true);
+  };
+  
+  const confirmDelete = () => {
+    if (deleteId) {
+      deleteTransactionMutation.mutate(deleteId);
+      setIsDeleteOpen(false);
+      setDeleteId(null);
+    }
+  };
+
   const handleEdit = (tx: any) => {
     setEditingTx(tx);
     setAmount(tx.amount.toString());
@@ -314,7 +413,7 @@ export function ServicePage({
     // Set specific metadata fields to state if they exist
     if (tx.metadata) {
         if (tx.metadata["Transaction Type"]) {
-            setTransactionType(tx.metadata["Transaction Type"] as "Withdraw" | "Transfer");
+            setTransactionType(tx.metadata["Transaction Type"] as "Withdraw" | "Transfer" | "Deposit");
         }
         if (tx.metadata["Games Played"]) {
             setGamesPlayed(tx.metadata["Games Played"]);
@@ -332,7 +431,6 @@ export function ServicePage({
     setProfit("");
     setPaymentStatus("paid");
     setMetadata({});
-    setSelectedDate("");
     setTransactionType("Withdraw");
     setGamesPlayed("");
   };
@@ -357,32 +455,33 @@ export function ServicePage({
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Icon className="h-5 w-5 text-primary" />
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Icon className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-display font-bold">{title}</h1>
+                <p className="text-sm text-muted-foreground">{description}</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-display font-bold">{title}</h1>
-              <p className="text-sm text-muted-foreground">{description}</p>
-            </div>
-          </div>
-          <Dialog open={isAddOpen} onOpenChange={(open) => {
-            setIsAddOpen(open);
-            if (!open) resetForm();
-          }}>
-            <DialogTrigger asChild>
-              <Button className="gradient-primary border-0 text-primary-foreground gap-2">
-                <Plus className="h-4 w-4" />
-                New Record
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>New {title} Record</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4 mt-4">
-                {/* Customer Selection */}
+            <Dialog open={isAddOpen} onOpenChange={(open) => {
+              setIsAddOpen(open);
+              if (!open) resetForm();
+            }}>
+              <DialogTrigger asChild>
+                <Button className="gradient-primary border-0 text-primary-foreground gap-2">
+                  <Plus className="h-4 w-4" />
+                  New Record
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>New {title} Record</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+                  {/* Customer Selection */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Customer</Label>
@@ -456,9 +555,10 @@ export function ServicePage({
                       onValueChange={setSelectedCustomerId}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Select a customer" />
+                        <SelectValue placeholder="Select a customer (Optional)" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="none">No Customer (Anonymous)</SelectItem>
                         {customers?.map((c) => (
                           <SelectItem key={c.id} value={c.id}>
                             {c.name} ({c.customer_type})
@@ -498,6 +598,19 @@ export function ServicePage({
                         />
                         <Label htmlFor="type-transfer" className="font-normal cursor-pointer">
                           Transfer
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          id="type-deposit"
+                          value="Deposit"
+                          checked={transactionType === "Deposit"}
+                          onChange={(e) => setTransactionType(e.target.value as "Deposit")}
+                          className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                        />
+                        <Label htmlFor="type-deposit" className="font-normal cursor-pointer">
+                          Deposit
                         </Label>
                       </div>
                     </div>
@@ -542,20 +655,6 @@ export function ServicePage({
                     />
                   </div>
                 )}
-
-                {/* Date Selection */}
-                <div className="space-y-2">
-                  <Label htmlFor="date">Date</Label>
-                  <Input
-                    id="date"
-                    type="datetime-local"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                  />
-                  <p className="text-[10px] text-muted-foreground">
-                    Leave empty for current date/time
-                  </p>
-                </div>
 
                 {/* Metadata Fields */}
                 {metadataFields.map((field) => (
@@ -602,21 +701,22 @@ export function ServicePage({
               </form>
             </DialogContent>
           </Dialog>
+        </div>
 
-          {/* Edit Transaction Dialog */}
-          <Dialog open={isEditOpen} onOpenChange={(open) => {
-            setIsEditOpen(open);
-            if (!open) {
-                setEditingTx(null);
-                resetForm();
-            }
-          }}>
-            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Edit {title} Record</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4 mt-4">
-                {/* Transaction Type Selection for POS Agent */}
+        {/* Edit Transaction Dialog */}
+        <Dialog open={isEditOpen} onOpenChange={(open) => {
+          setIsEditOpen(open);
+          if (!open) {
+            setEditingTx(null);
+            resetForm();
+          }
+        }}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit {title} Record</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+              {/* Transaction Type Selection for POS Agent */}
                 {title === "POS Agent" && (
                   <div className="space-y-2">
                     <Label>Transaction Type</Label>
@@ -645,6 +745,19 @@ export function ServicePage({
                         />
                         <Label htmlFor="edit-type-transfer" className="font-normal cursor-pointer">
                           Transfer
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          id="edit-type-deposit"
+                          value="Deposit"
+                          checked={transactionType === "Deposit"}
+                          onChange={(e) => setTransactionType(e.target.value as "Deposit")}
+                          className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                        />
+                        <Label htmlFor="edit-type-deposit" className="font-normal cursor-pointer">
+                          Deposit
                         </Label>
                       </div>
                     </div>
@@ -720,7 +833,7 @@ export function ServicePage({
                     </SelectContent>
                   </Select>
                 </div>
-
+                
                 <DialogFooter>
                   <Button
                     type="submit"
@@ -735,6 +848,73 @@ export function ServicePage({
               </form>
             </DialogContent>
           </Dialog>
+
+          {/* Search and Filter Bar */}
+          <Card className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 bg-muted/30">
+            <div className="lg:col-span-2 space-y-2">
+              <Label htmlFor="search" className="text-xs text-muted-foreground">Search</Label>
+              <div className="relative">
+                <Filter className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="search"
+                  placeholder="Search customer name..."
+                  className="pl-9"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="filter-status" className="text-xs text-muted-foreground">Status</Label>
+              <Select value={statusFilter} onValueChange={(val: PaymentStatus | "all") => setStatusFilter(val)}>
+                <SelectTrigger id="filter-status">
+                  <SelectValue placeholder="All Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
+                  <SelectItem value="unpaid">Unpaid</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="filter-type" className="text-xs text-muted-foreground">Customer Type</Label>
+              <Select value={customerTypeFilter} onValueChange={(val: CustomerType | "all" | "unknown") => setCustomerTypeFilter(val)}>
+                <SelectTrigger id="filter-type">
+                  <SelectValue placeholder="All Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="regular">Regular</SelectItem>
+                  <SelectItem value="vip">VIP</SelectItem>
+                  <SelectItem value="unknown">Unknown (Anonymous)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="filter-date" className="text-xs text-muted-foreground">Date Range</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="date"
+                  placeholder="Start"
+                  className="text-xs px-2"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+                <Input
+                  type="date"
+                  placeholder="End"
+                  className="text-xs px-2"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+            </div>
+          </Card>
         </div>
 
         {/* Transaction List */}
@@ -772,9 +952,22 @@ export function ServicePage({
                         {new Date(tx.created_at).toLocaleString()}
                       </span>
                       <span>•</span>
-                      <span className="capitalize">
-                        {tx.customers?.customer_type}
-                      </span>
+                      {tx.customers?.customer_type === 'vip' ? (
+                        <span className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-yellow-200">
+                          <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
+                          <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
+                          VIP
+                        </span>
+                      ) : tx.customers?.customer_type === 'regular' ? (
+                        <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-blue-200">
+                           <Star className="h-3 w-3 fill-blue-500 text-blue-500" />
+                           Regular
+                        </span>
+                      ) : (
+                        <span className="capitalize bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px] font-medium border border-gray-200">
+                           {tx.customers?.customer_type || "Guest"}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -809,10 +1002,30 @@ export function ServicePage({
                 <Button variant="ghost" size="icon" className="h-8 w-8 ml-2" onClick={() => handleEdit(tx)}>
                     <Pencil className="h-4 w-4 text-muted-foreground" />
                 </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 ml-2" onClick={() => handleDelete(tx.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
               </Card>
             ))}
           </div>
         )}
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This action cannot be undone. This will permanently delete the transaction record from the database.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setDeleteId(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardLayout>
   );

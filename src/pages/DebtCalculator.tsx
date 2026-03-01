@@ -34,7 +34,7 @@ const DebtCalculator = () => {
           id,
           amount,
           created_at,
-          customers!inner (
+          customers (
             name,
             phone,
             customer_type
@@ -184,9 +184,9 @@ const DebtCalculator = () => {
                   {debtData.map((tx) => (
                     <div key={tx.id} className="p-4 hover:bg-muted/50 transition-colors flex justify-between items-center">
                       <div>
-                        <p className="font-medium">{tx.customers.name}</p>
+                        <p className="font-medium">{tx.customers?.name || "Anonymous"}</p>
                         <div className="flex gap-2 text-xs text-muted-foreground">
-                          <span className="capitalize badge bg-gray-100 px-1 rounded">{tx.customers.customer_type}</span>
+                          <span className="capitalize badge bg-gray-100 px-1 rounded">{tx.customers?.customer_type || "Unknown"}</span>
                           <span>•</span>
                           <span>{format(new Date(tx.created_at), 'MMM dd, yyyy')}</span>
                           <span>•</span>

@@ -11,10 +11,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
-import { Search, CreditCard, CheckCircle, User, Banknote, Users, Send, Filter, CheckSquare } from "lucide-react";
+import { Search, CreditCard, CheckCircle, User, Banknote, Users, Send, Filter, CheckSquare, Eye } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -36,6 +43,10 @@ const DebtManagement = () => {
 
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
   const [isSelectAll, setIsSelectAll] = useState(false);
+  
+  // Detail Modal State
+  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   // 1. Fetch Customers who match the profile filters (Name, Phone, Type)
   const { data: customers } = useQuery({
@@ -44,6 +55,8 @@ const DebtManagement = () => {
       let query = supabase
         .from("customers")
         .select("id, name, phone, customer_type")
+        .neq("name", "") // Filter out empty names
+        .not("name", "is", null) // Filter out null names
         .order("name");
       
       if (filters.name) query = query.ilike("name", `%${filters.name}%`);
@@ -115,6 +128,11 @@ const DebtManagement = () => {
     } else {
       setSelectedCustomerIds([...selectedCustomerIds, id]);
     }
+  };
+
+  const handleViewDetails = (customer: any) => {
+    setSelectedCustomer(customer);
+    setIsDetailOpen(true);
   };
 
   // Calculate Totals for Selection
@@ -278,18 +296,25 @@ const DebtManagement = () => {
                       onCheckedChange={() => handleSelectCustomer(customer.id)}
                     />
                     <div className="flex-1">
-                      <div className="flex justify-between">
-                        <p className="font-semibold">{customer.name}</p>
-                        <p className={`font-bold ${customer.hasUnpaid ? "text-red-600" : "text-green-600"}`}>
-                          ₦{customer.totalAmount.toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="flex gap-2 text-xs text-muted-foreground mt-1">
-                        <span className="capitalize badge bg-gray-100 px-1 rounded">{customer.customer_type}</span>
-                        <span>•</span>
-                        <span>{customer.transactions.length} Records</span>
-                        <span>•</span>
-                        <span>{customer.phone || "No Phone"}</span>
+                      <div className="flex justify-between items-start">
+                        <div>
+                            <p className="font-semibold">{customer.name}</p>
+                            <div className="flex gap-2 text-xs text-muted-foreground mt-1">
+                                <span className="capitalize badge bg-gray-100 px-1 rounded">{customer.customer_type}</span>
+                                <span>•</span>
+                                <span>{customer.transactions.length} Records</span>
+                                <span>•</span>
+                                <span>{customer.phone || "No Phone"}</span>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <p className={`font-bold ${customer.hasUnpaid ? "text-red-600" : "text-green-600"}`}>
+                            ₦{customer.totalAmount.toLocaleString()}
+                            </p>
+                            <Button variant="ghost" size="sm" className="h-6 mt-1 text-xs" onClick={() => handleViewDetails(customer)}>
+                                <Eye className="h-3 w-3 mr-1" /> View Details
+                            </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -324,6 +349,54 @@ const DebtManagement = () => {
               )}
             </div>
           </Card>
+          {/* Customer Detail Modal */}
+          <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+            <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>
+                  Transactions for {selectedCustomer?.name}
+                  <span className={`ml-2 text-sm font-normal px-2 py-0.5 rounded-full ${
+                    selectedCustomer?.hasUnpaid ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                  }`}>
+                    Total: ₦{selectedCustomer?.totalAmount.toLocaleString()}
+                  </span>
+                </DialogTitle>
+              </DialogHeader>
+              
+              <div className="mt-4">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50 text-left">
+                      <th className="p-2 font-medium">Date</th>
+                      <th className="p-2 font-medium">Service</th>
+                      <th className="p-2 font-medium text-right">Amount</th>
+                      <th className="p-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedCustomer?.transactions.map((tx: any) => (
+                      <tr key={tx.id} className="border-b last:border-0 hover:bg-muted/10">
+                        <td className="p-2">{new Date(tx.created_at).toLocaleString()}</td>
+                        <td className="p-2 font-medium">{tx.services?.name || "Unknown"}</td>
+                        <td className="p-2 text-right">₦{Number(tx.amount).toLocaleString()}</td>
+                        <td className="p-2">
+                          <span className={`px-2 py-0.5 rounded-full text-xs capitalize ${
+                            tx.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {tx.payment_status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <DialogFooter>
+                <Button onClick={() => setIsDetailOpen(false)}>Close</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     </DashboardLayout>
